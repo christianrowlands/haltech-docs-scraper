@@ -124,15 +124,30 @@ class HaltechScraper:
         # Create semaphore for concurrent downloads
         semaphore = asyncio.Semaphore(config.CONCURRENT_DOWNLOADS)
         
-        # Progress bar
+        # Convert to list if set
+        article_list = list(article_urls)
+        total_articles = len(article_list)
+        
+        logger.info(f"Starting to scrape {total_articles} articles...")
+        
+        # Progress bar with total count
         tasks = []
-        for url in article_urls:
+        for url in article_list:
             task = self._scrape_article_with_semaphore(url, semaphore)
             tasks.append(task)
             
-        # Process all articles with progress bar
-        for task in tqdm.as_completed(tasks, desc="Scraping articles"):
+        # Process all articles with progress bar showing actual progress
+        progress_bar = tqdm(total=total_articles, desc="Scraping articles", unit="article")
+        
+        for task in asyncio.as_completed(tasks):
             await task
+            progress_bar.update(1)
+            
+            # Log progress every 50 articles
+            if progress_bar.n % 50 == 0:
+                logger.info(f"Progress: {progress_bar.n}/{total_articles} articles scraped")
+        
+        progress_bar.close()
             
     async def _scrape_article_with_semaphore(self, url, semaphore):
         """Scrape single article with semaphore for rate limiting"""
@@ -157,8 +172,9 @@ class HaltechScraper:
             page = await context.new_page()
             
             try:
-                # Navigate to the article
-                await page.goto(url, timeout=config.TIMEOUT, wait_until='networkidle')
+                # Navigate to the article with adaptive timeout
+                timeout = config.TIMEOUT * (retry_count + 1)  # Increase timeout on retries
+                await page.goto(url, timeout=timeout, wait_until='networkidle')
                 
                 # Wait a bit for dynamic content
                 await asyncio.sleep(1)
@@ -189,8 +205,13 @@ class HaltechScraper:
                         url
                     )
                 
-                # Create output file
-                output_path = create_output_path(url, article_data['title'])
+                # Create output file with enhanced path generation
+                output_path = create_output_path(
+                    url, 
+                    article_data['title'],
+                    markdown_content,
+                    article_data['breadcrumbs']
+                )
                 
                 # Add metadata header
                 category = article_data['breadcrumbs'][1] if len(article_data['breadcrumbs']) > 1 else None
@@ -299,10 +320,10 @@ class HaltechScraper:
         logger.info(f"Created main index: {index_path}")
 
 
-async def main():
+async def main(use_existing_sitemap=False):
     """Main entry point"""
     scraper = HaltechScraper()
-    await scraper.scrape_all()
+    await scraper.scrape_all(use_existing_sitemap=use_existing_sitemap)
 
 
 if __name__ == "__main__":

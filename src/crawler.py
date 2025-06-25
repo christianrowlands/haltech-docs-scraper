@@ -159,16 +159,62 @@ class HaltechCrawler:
         
     def _extract_category_info(self, soup, url):
         """Extract category information from the page"""
-        # Look for breadcrumbs
-        breadcrumbs = soup.find_all(['nav', 'ol', 'ul'], 
-                                   class_=lambda x: x and 'breadcrumb' in x.lower() if x else False)
+        # Multiple strategies for finding breadcrumbs
+        breadcrumb_selectors = [
+            # Common breadcrumb selectors
+            'nav.breadcrumb',
+            'nav[aria-label="breadcrumb"]',
+            '.breadcrumb',
+            '.breadcrumbs',
+            'ol.breadcrumb',
+            'ul.breadcrumb',
+            '.site-breadcrumbs',
+            '.navigation-breadcrumbs',
+            # Zoho specific
+            '.breadcrumb-container',
+            '.crumb-list',
+            '[class*="breadcrumb"]'
+        ]
         
-        if breadcrumbs:
-            for breadcrumb in breadcrumbs:
-                items = breadcrumb.find_all(['li', 'a'])
-                if items:
-                    category_path = [item.get_text(strip=True) for item in items]
-                    self.category_structure[url] = category_path
+        category_path = []
+        
+        # Try each selector
+        for selector in breadcrumb_selectors:
+            breadcrumb_elem = soup.select_one(selector)
+            if breadcrumb_elem:
+                # Extract text from all links and list items
+                items = breadcrumb_elem.find_all(['a', 'li', 'span'])
+                path = []
+                for item in items:
+                    text = item.get_text(strip=True)
+                    # Skip separator characters
+                    if text and text not in ['>', '/', '»', '›', '→', '|', '-']:
+                        path.append(text)
+                
+                if path:
+                    category_path = path
+                    logger.debug(f"Found breadcrumb for {url}: {path}")
+                    break
+        
+        # If no breadcrumb found, try to extract from page structure
+        if not category_path:
+            # Look for category in URL
+            if '/kb/articles/' in url:
+                # For articles, we'll need to determine category from content
+                # Look for category indicators in the page
+                category_indicators = soup.find_all(['div', 'span'], 
+                                                  class_=lambda x: x and any(term in x.lower() for term in ['category', 'section', 'topic']) if x else False)
+                
+                for indicator in category_indicators:
+                    text = indicator.get_text(strip=True)
+                    if text and len(text) < 100:  # Reasonable category name length
+                        category_path = ['Knowledge Base', 'Haltech', text]
+                        break
+        
+        # Store the category structure if found
+        if category_path:
+            self.category_structure[url] = category_path
+            logger.debug(f"Category structure for {url}: {category_path}")
                     
     def _save_site_map(self):
         """Save discovered URLs and structure to file"""

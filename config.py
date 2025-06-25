@@ -17,7 +17,7 @@ LOGS_DIR.mkdir(exist_ok=True)
 # Scraping settings
 REQUEST_DELAY = 1.5  # Seconds between requests
 MAX_RETRIES = 3
-TIMEOUT = 30000  # Milliseconds for Playwright
+TIMEOUT = 60000  # Milliseconds for Playwright (increased from 30s to 60s)
 CONCURRENT_DOWNLOADS = 3
 
 # Content settings

@@ -5,6 +5,7 @@ from datetime import datetime
 from slugify import slugify
 from urllib.parse import urljoin, urlparse
 import config
+from src.category_mapper import categorize_article, extract_category_from_path
 
 def setup_logging():
     """Set up logging configuration"""
@@ -73,23 +74,42 @@ def extract_domain_path(url):
     
     return path.split('/')
 
-def create_output_path(url, title=None):
+def create_output_path(url, title=None, content=None, breadcrumbs=None):
     """Create output file path based on URL and title"""
     path_parts = extract_domain_path(url)
     
-    # Create directory structure
-    if len(path_parts) > 1:
-        dir_path = config.OUTPUT_DIR / Path(*path_parts[:-1])
+    # Try to determine proper category structure
+    if '/kb/articles/' in url and breadcrumbs and len(breadcrumbs) <= 2:
+        # Article without clear navigation - use category mapper
+        category_path, _ = categorize_article(url, title or '', content or '')
+        dir_path = config.OUTPUT_DIR / Path(category_path)
+    elif breadcrumbs and len(breadcrumbs) > 2:
+        # Use breadcrumb navigation if available
+        # Skip the first two items (Knowledge Base, Haltech) and create path
+        clean_breadcrumbs = [create_slug(b) for b in breadcrumbs[2:]]
+        if clean_breadcrumbs:
+            dir_path = config.OUTPUT_DIR / Path(*clean_breadcrumbs)
+        else:
+            dir_path = config.OUTPUT_DIR
     else:
-        dir_path = config.OUTPUT_DIR
+        # Use URL structure
+        if len(path_parts) > 1:
+            dir_path = config.OUTPUT_DIR / Path(*path_parts[:-1])
+        else:
+            dir_path = config.OUTPUT_DIR
     
     dir_path.mkdir(parents=True, exist_ok=True)
     
-    # Create filename
-    if title:
-        filename = create_slug(title) + '.md'
+    # Always use URL slug for filename to ensure uniqueness
+    if path_parts:
+        # Use the last part of the URL as filename
+        filename = path_parts[-1] + '.md'
     else:
-        filename = create_slug(path_parts[-1] if path_parts else 'index') + '.md'
+        # Fallback to index if no path parts
+        filename = 'index.md'
+    
+    # Ensure the filename is clean
+    filename = clean_filename(filename)
     
     return dir_path / filename
 
