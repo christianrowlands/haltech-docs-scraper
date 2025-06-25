@@ -12,7 +12,7 @@ from src.parser import ArticleParser
 from src.converter import HTMLToMarkdownConverter
 from src.utils import (
     setup_logging, create_output_path, create_metadata_header,
-    get_image_filename, is_valid_url, normalize_url
+    get_image_filename, is_valid_url, normalize_url, calculate_relative_path_to_images
 )
 import config
 
@@ -197,14 +197,6 @@ class HaltechScraper:
                 if not markdown_content.strip():
                     raise ValueError("Empty markdown content after conversion")
                 
-                # Download images if enabled
-                if config.DOWNLOAD_IMAGES and article_data['images']:
-                    markdown_content = await self._process_images(
-                        markdown_content, 
-                        article_data['images'], 
-                        url
-                    )
-                
                 # Create output file with enhanced path generation
                 output_path = create_output_path(
                     url, 
@@ -212,6 +204,15 @@ class HaltechScraper:
                     markdown_content,
                     article_data['breadcrumbs']
                 )
+                
+                # Download images if enabled
+                if config.DOWNLOAD_IMAGES and article_data['images']:
+                    markdown_content = await self._process_images(
+                        markdown_content, 
+                        article_data['images'], 
+                        url,
+                        output_path
+                    )
                 
                 # Add metadata header
                 category = article_data['breadcrumbs'][1] if len(article_data['breadcrumbs']) > 1 else None
@@ -245,10 +246,16 @@ class HaltechScraper:
             else:
                 self.failed_urls.add(url)
                 
-    async def _process_images(self, markdown_content, images, article_url):
+    async def _process_images(self, markdown_content, images, article_url, output_path):
         """Download images and update markdown references"""
+        # Calculate the correct relative path from the markdown file to images directory
+        relative_to_images = calculate_relative_path_to_images(output_path)
+        
         for i, img_data in enumerate(images):
             src = img_data['src']
+            alt_text = img_data.get('alt', '')
+            title_text = img_data.get('title', '')
+            
             if not src:
                 continue
                 
@@ -267,16 +274,66 @@ class HaltechScraper:
                         content = await response.read()
                         image_path.write_bytes(content)
                         
+                        # Create the correct relative path for this specific file
+                        relative_path = f"{relative_to_images}/{filename}"
+                        
                         # Update markdown to reference local image
-                        relative_path = f"../images/{filename}"
+                        # First try to replace existing markdown image syntax
+                        old_md_image = f"![{alt_text}]({src}"
+                        new_md_image = f"![{alt_text}]({relative_path}"
+                        if old_md_image in markdown_content:
+                            markdown_content = markdown_content.replace(old_md_image, new_md_image)
+                        
+                        # Also try with absolute URL
+                        old_md_image_abs = f"![{alt_text}]({absolute_url}"
+                        if old_md_image_abs in markdown_content:
+                            markdown_content = markdown_content.replace(old_md_image_abs, new_md_image)
+                        
+                        # Fallback: simple URL replacement
                         markdown_content = markdown_content.replace(src, relative_path)
                         markdown_content = markdown_content.replace(absolute_url, relative_path)
                         
-                        logger.debug(f"Downloaded image: {filename}")
+                        logger.debug(f"Downloaded image: {filename} -> {relative_path}")
                         
             except Exception as e:
                 logger.warning(f"Failed to download image {src}: {str(e)}")
                 
+        # Ensure all images are referenced in markdown
+        markdown_content = self._ensure_image_references(markdown_content, images, relative_to_images)
+        
+        return markdown_content
+        
+    def _ensure_image_references(self, markdown_content, images, relative_to_images):
+        """Ensure all downloaded images have markdown references"""
+        # Check if each image has a markdown reference
+        for i, img_data in enumerate(images):
+            src = img_data['src']
+            alt_text = img_data.get('alt', '')
+            
+            if not src:
+                continue
+                
+            # Generate the expected filename
+            absolute_url = normalize_url(src, "")
+            filename = get_image_filename(absolute_url or src, i)
+            relative_path = f"{relative_to_images}/{filename}"
+            
+            # Check if this image path exists in the markdown
+            if relative_path not in markdown_content and filename in str(config.IMAGES_DIR.iterdir()):
+                # Image was downloaded but not referenced - add it at the end
+                logger.debug(f"Adding missing image reference: {filename}")
+                
+                # Add a section for images if they're not already in the content
+                if not markdown_content.strip().endswith('\n\n'):
+                    markdown_content += '\n\n'
+                
+                # Add image with descriptive text
+                image_ref = f"![{alt_text or 'Image'}]({relative_path})"
+                if alt_text:
+                    markdown_content += f"{image_ref}\n\n"
+                else:
+                    markdown_content += f"\n{image_ref}\n\n"
+                    
         return markdown_content
         
     async def _generate_index_files(self):

@@ -1,4 +1,5 @@
 import re
+import os
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -157,3 +158,23 @@ def get_image_filename(url, index=None):
         filename += '.jpg'
     
     return clean_filename(filename)
+
+def calculate_relative_path_to_images(markdown_file_path):
+    """Calculate the relative path from a markdown file to the images directory"""
+    # Convert to Path objects
+    md_path = Path(markdown_file_path)
+    images_dir = config.IMAGES_DIR
+    
+    # Get the parent directory of the markdown file
+    md_parent = md_path.parent
+    
+    # Calculate relative path
+    try:
+        # Get relative path from markdown file's directory to images directory
+        relative = os.path.relpath(images_dir, md_parent)
+        # Convert backslashes to forward slashes for consistency
+        relative = relative.replace('\\', '/')
+        return relative
+    except ValueError:
+        # If paths are on different drives (Windows), use absolute path
+        return str(images_dir)

@@ -12,9 +12,11 @@ class HTMLToMarkdownConverter:
             'heading_style': 'ATX',
             'bullets': '-',
             'code_language': '',
-            'strip': ['script', 'style', 'meta', 'link'],
+            'strip': ['script', 'style', 'meta', 'link'],  # Note: 'img' is NOT in strip list
             'wrap': False,
-            'wrap_width': 0
+            'wrap_width': 0,
+            'default_title': True,  # Use alt text as title if no title attribute
+            'exclude_styles': False  # Don't exclude styled elements
         }
         
     def convert(self, html_content, base_url=None):
@@ -85,8 +87,37 @@ class HTMLToMarkdownConverter:
         # Clean up code blocks
         markdown = re.sub(r'```\s*\n\s*```', '', markdown)
         
+        # Ensure images are in proper markdown format
+        # Convert any HTML img tags that weren't converted
+        markdown = self._convert_remaining_img_tags(markdown)
+        
         # Remove leading/trailing whitespace
         markdown = markdown.strip()
+        
+        return markdown
+        
+    def _convert_remaining_img_tags(self, markdown):
+        """Convert any remaining HTML img tags to markdown format"""
+        # Pattern to find HTML img tags
+        img_pattern = r'<img\s+[^>]*?src=["\']([^"\']+)["\'][^>]*?>'
+        
+        def replace_img(match):
+            full_tag = match.group(0)
+            src = match.group(1)
+            
+            # Try to extract alt text
+            alt_match = re.search(r'alt=["\']([^"\']*)["\']', full_tag)
+            alt = alt_match.group(1) if alt_match else ''
+            
+            # Try to extract title
+            title_match = re.search(r'title=["\']([^"\']*)["\']', full_tag)
+            title = f' "{title_match.group(1)}"' if title_match else ''
+            
+            # Return markdown image syntax
+            return f'![{alt}]({src}{title})'
+        
+        # Replace all img tags
+        markdown = re.sub(img_pattern, replace_img, markdown)
         
         return markdown
         

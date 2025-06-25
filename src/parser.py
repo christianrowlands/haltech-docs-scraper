@@ -192,19 +192,66 @@ class ArticleParser:
     def _extract_images(self, soup):
         """Extract image URLs from content"""
         images = []
+        seen_srcs = set()  # Track seen images to avoid duplicates
         
+        # Find all img tags
         for img in soup.find_all('img'):
-            src = img.get('src')
-            if src:
-                alt = img.get('alt', '')
-                title = img.get('title', '')
+            src = img.get('src', '').strip()
+            
+            # Skip empty sources, data URIs, and duplicates
+            if not src or src.startswith('data:') or src in seen_srcs:
+                continue
                 
-                images.append({
-                    'src': src,
-                    'alt': alt,
-                    'title': title
-                })
+            # Get image metadata
+            alt = img.get('alt', '').strip()
+            title = img.get('title', '').strip()
+            
+            # If no alt text, try to find caption or nearby text
+            if not alt:
+                # Check parent figure for figcaption
+                parent_figure = img.find_parent('figure')
+                if parent_figure:
+                    figcaption = parent_figure.find('figcaption')
+                    if figcaption:
+                        alt = figcaption.get_text(strip=True)
                 
+                # Still no alt? Use title or filename
+                if not alt and title:
+                    alt = title
+                elif not alt:
+                    # Extract filename without extension as last resort
+                    from urllib.parse import urlparse
+                    from pathlib import Path
+                    parsed = urlparse(src)
+                    filename = Path(parsed.path).stem
+                    if filename:
+                        alt = filename.replace('-', ' ').replace('_', ' ')
+            
+            images.append({
+                'src': src,
+                'alt': alt,
+                'title': title
+            })
+            seen_srcs.add(src)
+        
+        # Also check for images in CSS background-image (common in some sites)
+        for elem in soup.find_all(style=re.compile(r'background-image:\s*url')):
+            style = elem.get('style', '')
+            match = re.search(r'background-image:\s*url\(["\']?([^"\'()]+)["\']?\)', style)
+            if match:
+                src = match.group(1).strip()
+                if src and not src.startswith('data:') and src not in seen_srcs:
+                    # Try to get alt text from element content or aria-label
+                    alt = elem.get('aria-label', '') or elem.get_text(strip=True)[:100]
+                    
+                    images.append({
+                        'src': src,
+                        'alt': alt,
+                        'title': ''
+                    })
+                    seen_srcs.add(src)
+                
+        logger.debug(f"Extracted {len(images)} unique images")
         return images
         
     def clean_content(self, content_html):
